@@ -1,0 +1,112 @@
+import numpy as np
+import pandas as pd
+import datetime
+from WindPy import w
+w.start()
+w.isconnected()
+
+###########################################################################
+
+def updatefun(start_date,end_date,pro_type):
+    '''
+    start_date——上周六
+    end_date——本周五
+    pro_type——产品类型（fix,mix,com）
+    '''
+    product_info = pd.read_csv("G:\\实习\\贾\\周报\\产品信息.csv",encoding="gbk")
+    product_info.set_index("账套名称",inplace=True)
+    
+    this_time = end_date[-4:]
+    full_data = pd.read_excel("G:\\实习\\贾\\周报\\"+this_time+"\\周报代码数据\\"+"资产净值及两费浏览表.xlsx",skiprows=4,skipfooter=19) 
+    full_data = full_data.iloc[:,0:7]
+    full_data.columns = ["账套名称","产品代码","日期","资产净值","资产份额","单位净值","累计净值"]
+    full_data.sort_values(by="日期",inplace=True, ascending=True) 
+    full_data = full_data.join(product_info,on="账套名称",how="left")
+    full_data.set_index('日期',inplace=True)
+    
+    docu_name = {"fix":"固收类","mix":"混合类","com":"商品类"}
+    
+    
+    last_time = datetime.datetime.strftime(datetime.datetime.strptime(start_date,"%Y%m%d")-datetime.timedelta(days=1),"%Y%m%d")[-4:]
+    type_data = pd.read_excel("G:\\实习\\贾\\周报\\"+last_time+"\\周报代码数据\\"+docu_name[pro_type]+".xlsx","计算页")
+    type_data['日期'] = type_data['日期'].apply(lambda x:x.date())
+    type_data.set_index("日期",inplace= True)
+    
+    benchmark = {"fix":"H11001.CSI","mix":"000300.SH","com":"CCFI.WI"}
+    Wind_data = w.wsd(benchmark[pro_type], "pct_chg", start_date, end_date, "")   ###   获取涨跌幅数据
+    trade_date = Wind_data.Times
+    trade_date_num = len(trade_date)
+    pct_chg = Wind_data.Data[0]
+    
+    up_data = pd.DataFrame(index=trade_date,columns=type_data.columns)
+    up_data['涨跌幅'] = np.array(pct_chg)/100
+    
+    type_product_list = type_data.iloc[:,2:].columns[pd.DataFrame(type_data.iloc[:,2:].columns.values)[0].apply(lambda x:"日度收益率_" not in x).values.tolist()].values.tolist()
+    for i in type_product_list:
+        if len(full_data[full_data['账套名称']==i]) < trade_date_num:
+            up_data[i] = np.full(trade_date_num, np.nan)
+        else:
+            up_data[i] = full_data[full_data['账套名称']==i].iloc[-trade_date_num:,:]['累计净值'].values
+            
+    new_data = pd.concat([type_data,up_data])
+    new_data['对比基准'] = (new_data['涨跌幅']+1).cumprod().values
+    for i in type_product_list:
+        col_name = "日度收益率_"+i
+        new_data[col_name] = ((new_data[i]-new_data[i].shift(1))/new_data[i].shift(1)).values
+    new_data.index.rename('日期',inplace=True)
+    
+    return new_data
+
+###########################################################################
+
+start_date = "20220409"
+end_date = "20220415"
+
+for pro_type in ["fix","mix","com"]:
+    updated_data = updatefun(start_date,end_date,pro_type)
+    this_time = end_date[-4:]
+    docu_name = {"fix":"固收类","mix":"混合类","com":"商品类"}
+    updated_data.to_excel(excel_writer="G:\\实习\\贾\\周报\\"+this_time+"\\周报代码数据\\"+docu_name[pro_type]+".xlsx", sheet_name='计算页')
+ 
+###########################################################################
+
+Wind_data = w.wsd("H11001.CSI", "pct_chg", start_date, end_date, "")   ###   获取涨跌幅数据
+trade_date = Wind_data.Times
+trade_date_num = len(trade_date)
+pct_chg = Wind_data.Data[0]
+product_info = pd.read_csv("G:\\实习\\贾\\周报\\产品信息.csv",encoding="gbk")
+product_info.set_index("账套名称",inplace=True)
+this_time = end_date[-4:]
+full_data = pd.read_excel("G:\\实习\\贾\\周报\\"+this_time+"\\周报代码数据\\"+"资产净值及两费浏览表.xlsx",skiprows=4,skipfooter=19) 
+full_data = full_data.iloc[:,0:7]
+full_data.columns = ["账套名称","产品代码","日期","资产净值","资产份额","单位净值","累计净值"]
+full_data.sort_values(by="日期",inplace=True, ascending=True) 
+full_data = full_data.join(product_info,on="账套名称",how="left").reset_index(drop=True)
+full_data
+
+###########################################################################
+
+total_scale = full_data.groupby('日期')['资产净值'].sum()[-trade_date_num:,]
+total_scale.to_excel(excel_writer="G:\\实习\\贾\\周报\\0415\\周报代码数据\\total_scale.xlsx")
+total_scale
+
+###########################################################################
+
+last_day_data = full_data[full_data['日期']==datetime.datetime.strftime(datetime.datetime.strptime(end_date,"%Y%m%d"),"%Y-%m-%d")]
+last_day_data
+
+###########################################################################
+
+(last_day_data.groupby('产品品类')['资产净值'].sum()/100000000)
+
+
+
+
+
+
+
+
+
+
+
+
