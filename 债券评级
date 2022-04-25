@@ -1,0 +1,144 @@
+import copy
+import os
+import re
+import pandas as pd
+import numpy as np
+
+#################################################################################
+
+date_end ='20220415'
+path = 'G:\\DATA_BASE\\Excel_Table\\zg_data\\估值表\\'+ date_end +'\\'
+filenames = os.listdir(path)
+
+#################################################################################
+
+fund_name_list= []
+for root,dir,files in os.walk(path):
+    for f in files:
+        fund_name_list.append(f)
+    pass
+
+#################################################################################
+
+def pickup(date, fund_name_list):
+    
+    front_ls = ['1102','1103','3102','1105','1107']  #===========
+    cols = ['id','name','number','per_cost','cost','cost2value','price','mv','mv2value']
+    ls = []
+    for fund_name_ in fund_name_list:
+        file_name = 'G:\\DATA_BASE\\Excel_Table\\zg_data\\估值表\\'+ date_end +'\\'+fund_name_
+        Fund_Value = pd.read_excel(file_name)
+        Fund_Value = Fund_Value.iloc[:,:9]
+        Fund_Value.columns= cols
+        Fund_Value['id'] = Fund_Value['id'].astype(str)
+        Fund_Value.loc[:,'front'] = Fund_Value['id'].apply(lambda x:x[:4])
+        Fund_Value.loc[:,'mdedian'] = Fund_Value['id'].apply(lambda x:x[:4])
+        df_select = Fund_Value[Fund_Value['front'].isin(front_ls)].copy()
+        if df_select.empty:
+            print(fund_name_+' holding is empty')
+            continue
+            pass
+        
+        df_select.loc[(df_select['front']=='1103'),'varity'] = '债券'
+        df_select.loc[(df_select['front']=='1102'),'varity'] = '股票'
+        df_select.loc[(df_select['front']=='3102'),'varity'] = '商品及金融衍生品'
+        df_select.loc[(df_select['front']=='1105'),'varity'] = '公募基金'  ##我改了============================
+        df_select.loc[(df_select['front']=='1107'),'varity'] = '私募基金'
+        df_select.loc[:,'fund'] = fund_name_
+        df_select.loc[:,'date'] = date
+        df_select.loc[:,'str_leng'] = df_select['id'].apply(lambda x:len(x))
+        df = df_select[df_select['str_leng']>8].copy()
+        df.loc[:,'code'] = df['id'].apply(lambda x:x[8:])
+        pick_col = ['date','fund','code','varity'] +  cols
+        ls.append(df[pick_col].copy())
+        
+        pass
+    
+    out_df = pd.concat(ls,ignore_index=True)
+
+    return out_df
+  
+#################################################################################
+    
+    
+date_ls = [20220415]
+all_ls = []
+for date in date_ls:
+    out_df  = pickup(date, fund_name_list)
+    all_ls.append(out_df)
+    pass
+
+#################################################################################
+
+
+##  总持仓情况
+df_final0 = pd.concat(all_ls)
+df_final = df_final0.dropna(subset=['number'])
+df_final.loc[:,'fund'] = df_final['fund'].apply(lambda x:re.findall(r'_(.*?)_',x)[0])
+df_final.to_csv(r"G:\DATA_BASE\Z_automaitc\zg_monthly_report_mrk\monthly_data\fund_holdings.csv",encoding="utf_8_sig")
+
+#################################################################################
+
+
+
+#%%
+#债券持仓情况
+df_bondholdings1 = df_final[df_final['varity'] == '债券']
+#导入债券池，匹配代码
+bond_pool=pd.read_csv(r"G:\DATA_BASE\Z_automaitc\zg_monthly_report_mrk\monthly_data\债券汇总.csv",encoding='gb18030') 
+bond_pool.rename(columns={'证券名称':'name'}, inplace = True)
+df_bondholdings = pd.merge(df_bondholdings1,bond_pool,how='left')
+df_bondholdings.to_csv(r"G:\DATA_BASE\Z_automaitc\zg_monthly_report_mrk\monthly_data\fund_holdings.csv",encoding="utf_8_sig")
+
+#################################################################################
+
+#检查债券代码是否都匹配
+namelist = df_bondholdings.loc[pd.isna(df_bondholdings['Wind代码']),('code','name')]
+print('未匹配的债券代码为： ',namelist)
+
+#################################################################################
+
+
+#抓取债券债项评级、主体评级、证券内评等级、评级是否下调或展望为负面
+bond_pool = df_bondholdings[["date","fund","Wind代码","name","number","per_cost","cost","cost2value","price","mv","mv2value"]]
+bond_pool.to_csv(r"G:\DATA_BASE\Z_automaitc\zg_monthly_report_mrk\bond_holdings.csv",encoding="utf_8_sig")
+
+#################################################################################
+
+
+from WindPy import w
+w.start()
+w.isconnected()
+ZQ_rate0 = pd.read_excel(r'G:\方正中期风险管理\2.债券信用评级\0. 统一授信管理\证券内评明细\评级明细_2022-04-08.xls') #此处需要修改文件日期
+ZQ_rate0.rename(columns={'客户名称':'ISSUER_ACTUAL'}, inplace = True)
+ZQ_rate = ZQ_rate0[["ISSUER_ACTUAL","认定等级"]]
+bondname = bond_pool[["Wind代码"]]
+#bondname.to_csv(r"D:\DATA_BASE\Z_automaitc\zg_monthly_report_mrk\fund_holdings.csv",encoding="utf_8_sig")
+bondname1 =bondname.drop_duplicates()
+codelist = bondname1['Wind代码'].tolist()
+#codelist = ",".join(bondname1['Wind代码'])
+#codelist1 = "'"+codelist+"'"
+#矩阵列名：1- 万得代码 2-最新债项评级 3-债项评级变动方向 4-最新主体评级  5-主体评级变动方向 6-主体评级展望 7-债券实际发行人
+winddata = w.wss(codelist, "amount,rate_changesofrating,latestissurercreditrating,rate_lateissuerchng,ratingoutlooks,issuer_actual")
+#aaa= w.wss('110053.SH', "amount,rate_changesofrating,latestissurercreditrating,rate_lateissuerchng,ratingoutlooks,issuer_actual")
+#pdf = pd.DataFrame(winddata.Data,columns=winddata.Codes)
+#pdfT =pd.DataFrame(winddata.Data,columns=winddata.Codes).T
+#pdfT.columns = ['Wind代码','最新债项评级','债项评级变动方向','最新主体评级','主体评级变动方向','主体评级展望','债券实际发行人']
+pdf1 =pd.DataFrame(winddata.Data,index=winddata.Fields)
+pdf1 =pdf1.T
+df_112 = pd.DataFrame(winddata.Codes,columns=['Wind代码'])
+bond_pool_winddata = pd.concat([df_112, pdf1],axis=1)
+bond_pool_winddata1 = pd.merge(bond_pool_winddata,ZQ_rate,how='left')
+bond_pool_final = pd.merge(bond_pool,bond_pool_winddata1,how='left')
+bond_pool_final.to_csv(r"G:/方正中期风险管理/3.跟踪报告/1. 资管周报/债券持仓/bond_holdings"+date_end+".csv",encoding="utf_8_sig")
+
+#################################################################################
+
+
+
+
+
+
+
+
+
